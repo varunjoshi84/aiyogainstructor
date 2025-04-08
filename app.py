@@ -1,14 +1,15 @@
 import os
 import requests
-import mysql.connector
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash, g
 from werkzeug.security import generate_password_hash, check_password_hash
 import google.generativeai as genai
-from flask import g
 import base64
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from urllib.parse import urlparse
+import os
 
 # Load environment variables from .env file
 load_dotenv()
@@ -27,55 +28,50 @@ genai.configure(api_key=GEMINI_API_KEY)
 # Initialize Gemini model with the newer version
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# MySQL Configuration
-MYSQL_HOST = 'localhost'
-MYSQL_USER = 'root'
-MYSQL_PASSWORD = ''
-MYSQL_DB = 'yoga_db'
+# Database Configuration
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/yoga_db')
+
+# Fix Render's DATABASE_URL if needed
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
 def get_db():
     if 'db' not in g:
-        g.db = mysql.connector.connect(
-            host=MYSQL_HOST,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DB
-        )
+        g.db = create_engine(DATABASE_URL)
     return g.db
 
 def init_db():
     db = get_db()
-    cursor = db.cursor()
     
     # Create users table
-    cursor.execute('''
+    db.execute(text('''
         CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             username VARCHAR(255) UNIQUE NOT NULL,
             password VARCHAR(255) NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    ''')
+    '''))
     
     # Create chat_history table
-    cursor.execute('''
+    db.execute(text('''
         CREATE TABLE IF NOT EXISTS chat_history (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            message TEXT NOT NULL,
-            response TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            message TEXT,
+            response TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
-    ''')
+    '''))
     
-    db.commit()
-    cursor.close()
+    # No need to commit with SQLAlchemy execute
 
 @app.teardown_appcontext
 def close_db(error):
     if hasattr(g, 'db'):
-        g.db.close()
+        # SQLAlchemy engine doesn't need explicit closing
+        pass
 
 # Initialize database on startup
 with app.app_context():
@@ -235,24 +231,21 @@ def signup():
     
     try:
         db = get_db()
-        cursor = db.cursor()
         
         # Check if username already exists
-        cursor.execute('SELECT id FROM users WHERE username = %s', (username,))
-        if cursor.fetchone():
+        result = db.execute(text('SELECT id FROM users WHERE username = :username'),
+                          {'username': username}).fetchone()
+        if result:
             return jsonify({'error': 'Username already exists'}), 400
         
         # Hash password and create new user
         hashed_password = generate_password_hash(password)
-        cursor.execute(
-            'INSERT INTO users (username, password) VALUES (%s, %s)',
-            (username, hashed_password)
-        )
-        db.commit()
+        result = db.execute(
+            text('INSERT INTO users (username, password) VALUES (:username, :password) RETURNING id'),
+            {'username': username, 'password': hashed_password}
+        ).fetchone()
         
-        # Get the new user's ID
-        cursor.execute('SELECT id FROM users WHERE username = %s', (username,))
-        user_id = cursor.fetchone()[0]
+        user_id = result[0]
         
         # Set session variables
         session['user_id'] = user_id
@@ -263,10 +256,8 @@ def signup():
             'message': 'Registration successful',
             'redirect': '/app'
         }), 201
-    except mysql.connector.Error as err:
+    except Exception as err:
         return jsonify({'error': str(err)}), 500
-    finally:
-        cursor.close()
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -279,14 +270,15 @@ def login():
     
     try:
         db = get_db()
-        cursor = db.cursor()
         
         # Get user from database
-        cursor.execute('SELECT id, password FROM users WHERE username = %s', (username,))
-        user = cursor.fetchone()
+        result = db.execute(
+            text('SELECT id, password FROM users WHERE username = :username'),
+            {'username': username}
+        ).fetchone()
         
-        if user and check_password_hash(user[1], password):
-            session['user_id'] = user[0]
+        if result and check_password_hash(result[1], password):
+            session['user_id'] = result[0]
             session['username'] = username
             session['logged_in'] = True
             return jsonify({
@@ -295,35 +287,29 @@ def login():
             }), 200
         else:
             return jsonify({'error': 'Invalid username or password'}), 401
-    except mysql.connector.Error as err:
+    except Exception as err:
         return jsonify({'error': str(err)}), 500
-    finally:
-        cursor.close()
 
 @app.route('/save_chat', methods=['POST'])
 def save_chat():
-    if 'user_id' not in session:
+    if not session.get('logged_in'):
         return jsonify({'error': 'Not logged in'}), 401
     
     data = request.get_json()
     message = data.get('message')
     response = data.get('response')
-    
-    if not message or not response:
-        return jsonify({'error': 'Message and response are required'}), 400
+    user_id = session.get('user_id')
     
     try:
         db = get_db()
-        cursor = db.cursor()
         
-        cursor.execute(
-            'INSERT INTO chat_history (user_id, message, response) VALUES (%s, %s, %s)',
-            (session['user_id'], message, response)
+        db.execute(
+            text('INSERT INTO chat_history (user_id, message, response) VALUES (:user_id, :message, :response)'),
+            {'user_id': user_id, 'message': message, 'response': response}
         )
-        db.commit()
         
-        return jsonify({'message': 'Chat saved successfully'}), 201
-    except mysql.connector.Error as err:
+        return jsonify({'success': True}), 200
+    except Exception as err:
         return jsonify({'error': str(err)}), 500
 
 @app.route('/skip-login')
@@ -417,4 +403,4 @@ def new_chat():
     return jsonify({'status': 'success'})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='127.0.0.1', port=5001, debug=True)
