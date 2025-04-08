@@ -61,11 +61,7 @@ http://localhost:5000
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 
 - Thanks to GROQ for providing the AI capabilities
-- Special thanks to all contributors and users
