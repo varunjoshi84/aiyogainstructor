@@ -41,7 +41,7 @@ Talisman(
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 # Database Configuration
-DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///yoga.db')
+DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://localhost/yoga_db')
 
 # Fix Render's DATABASE_URL if needed
 if DATABASE_URL.startswith('postgres://'):
