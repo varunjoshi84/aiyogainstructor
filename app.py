@@ -44,9 +44,20 @@ model = genai.GenerativeModel('gemini-1.5-flash')
 DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://localhost/yoga_db')
 
 # Fix Render's DATABASE_URL if needed
+# Ensure PostgreSQL URL format
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
     DATABASE_URL += '?sslmode=require'
+
+# Verify database connection
+def verify_db_connection():
+    try:
+        db = get_db()
+        db.connect()
+        return True
+    except Exception as e:
+        print(f"Database connection error: {str(e)}")
+        return False
 
 def get_db():
     if 'db' not in g:
