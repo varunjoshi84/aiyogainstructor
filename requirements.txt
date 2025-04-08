@@ -3,6 +3,10 @@ werkzeug==2.0.1
 requests==2.26.0
 google-generativeai>=0.3.2
 # psycopg2-binary is included for PostgreSQL support
+<<<<<<< HEAD
+=======
+psycopg2-binary==2.9.9
+>>>>>>> 21480ba15acda960d20bb058d6b2930cde6ddac3
 # Removed MySQL-specific dependency
 python-dotenv
 gunicorn==21.2.0
