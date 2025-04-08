@@ -1,5 +1,7 @@
 # Yoga Instructor AI
 
+# AIYogaInstructor
+
 An AI-powered yoga instruction application that provides personalized yoga guidance and recommendations.
 
 ## Features
@@ -20,8 +22,8 @@ Before you begin, ensure you have the following installed:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/yoga-instructor-ai.git
-cd yoga-instructor-ai
+git clone https://github.com/varunjoshi84/aiyogainstructor.git
+cd aiyogainstructor
 ```
 
 2. Create and activate a virtual environment:
