@@ -15,25 +15,38 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.getenv('SECRET_KEY', os.urandom(24))
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
 # Configure Gemini API
-GEMINI_API_KEY = "AIzaSyAJK78KMa3L4twsgzSInSzwT8Sw_5cioLM"  # Your Gemini API key
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 genai.configure(api_key=GEMINI_API_KEY)
+
+# Production security headers
+from flask_talisman import Talisman
+Talisman(
+    app,
+    content_security_policy={
+        'default-src': ["'self'"],
+        'script-src': ["'self'"],
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'img-src': ["'self'", "data:"]
+    }
+)
 
 # Initialize Gemini model with the newer version
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 # Database Configuration
-DATABASE_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/yoga_db')
+DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///yoga.db')
 
 # Fix Render's DATABASE_URL if needed
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+    DATABASE_URL += '?sslmode=require'
 
 def get_db():
     if 'db' not in g:
@@ -403,4 +416,6 @@ def new_chat():
     return jsonify({'status': 'success'})
 
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5001, debug=True)
+    # Prevent running dev server in production
+    if os.getenv('FLASK_ENV') != 'production':
+        app.run(host='127.0.0.1', port=5001, debug=os.getenv('FLASK_DEBUG', 'false').lower() == 'true')
