@@ -1,12 +1,15 @@
 services:
+  # Web service
   - type: web
     name: ai-yoga-instructor
     env: python
+    region: ohio
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app
     envVars:
-      - key: FLASK_ENV
-        value: production
+      - key: PYTHON_VERSION
+        value: 3.9.0
       - key: GEMINI_API_KEY
         sync: false
       - key: GROQ_API_KEY
@@ -19,3 +22,4 @@ services:
         sync: false
       - key: MYSQL_DB
         sync: false
+    healthCheckPath: /

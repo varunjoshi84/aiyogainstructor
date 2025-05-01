@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
@@ -45,46 +45,64 @@ MYSQL_DB = os.getenv('MYSQL_DB', 'yoga_db')
 
 def get_db():
     if 'db' not in g:
-        g.db = mysql.connector.connect(
-            host=MYSQL_HOST,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DB
-        )
+        try:
+            g.db = mysql.connector.connect(
+                host=MYSQL_HOST,
+                user=MYSQL_USER,
+                password=MYSQL_PASSWORD,
+                database=MYSQL_DB
+            )
+        except mysql.connector.Error as err:
+            print(f"Database connection error: {err}")
+            # Return None or create a dummy DB for demo mode
+            if os.environ.get('RENDER'):
+                # In production on Render, we might want to handle this differently
+                print("Running in demo mode on Render without database")
+                return None
+            raise
     return g.db
 
 def init_db():
-    db = get_db()
-    cursor = db.cursor()
-    
-    # Create users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            password VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Create chat_history table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS chat_history (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT,
-            message TEXT NOT NULL,
-            response TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-    ''')
-    
-    db.commit()
-    cursor.close()
+    try:
+        db = get_db()
+        if db is None:
+            print("Skipping database initialization - running in demo mode")
+            return
+            
+        cursor = db.cursor()
+        
+        # Create users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(255) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create chat_history table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT,
+                message TEXT NOT NULL,
+                response TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        
+        db.commit()
+        cursor.close()
+    except Exception as e:
+        print(f"Database initialization error: {e}")
+        if os.environ.get('RENDER'):
+            print("Continuing in demo mode without database")
 
 @app.teardown_appcontext
 def close_db(error):
-    if hasattr(g, 'db'):
+    if hasattr(g, 'db') and g.db is not None:
         g.db.close()
 
 def validate_api_keys():
@@ -94,11 +112,14 @@ def validate_api_keys():
     # Check MySQL connection
     try:
         db = get_db()
-        cursor = db.cursor()
-        cursor.execute("SELECT VERSION()")
-        version = cursor.fetchone()[0]
-        print(f"MySQL Connection: Successful (Version: {version})")
-        cursor.close()
+        if db is None:
+            print("MySQL Connection: Skipped - running in demo mode")
+        else:
+            cursor = db.cursor()
+            cursor.execute("SELECT VERSION()")
+            version = cursor.fetchone()[0]
+            print(f"MySQL Connection: Successful (Version: {version})")
+            cursor.close()
     except Exception as e:
         print(f"MySQL Connection: Failed - {str(e)}")
     
@@ -184,9 +205,9 @@ def ask_groq(user_input):
 
     data = {
         "model": "llama3-8b-8192",  # ✅ Supported Groq model
-        "messages": [{"role": "system", "content": "You are a knowledgeable AI yoga instructor."}] + session["chat_history"],
+        "messages": [{"role": "system", "content": "You are a knowledgeable AI yoga instructor. you have to only give response to yoga related question"}] + session["chat_history"],
         "temperature": 0.7,
-        "max_tokens": 50
+        "max_tokens": 100
     }
 
     try:
@@ -278,6 +299,9 @@ def signup():
     
     try:
         db = get_db()
+        if db is None:
+            return jsonify({'error': 'Database not available'}), 500
+        
         cursor = db.cursor()
         
         # Check if username already exists
@@ -322,6 +346,9 @@ def login():
     
     try:
         db = get_db()
+        if db is None:
+            return jsonify({'error': 'Database not available'}), 500
+        
         cursor = db.cursor()
         
         # Get user from database
@@ -342,32 +369,6 @@ def login():
         return jsonify({'error': str(err)}), 500
     finally:
         cursor.close()
-
-@app.route('/save_chat', methods=['POST'])
-def save_chat():
-    if 'user_id' not in session:
-        return jsonify({'error': 'Not logged in'}), 401
-    
-    data = request.get_json()
-    message = data.get('message')
-    response = data.get('response')
-    
-    if not message or not response:
-        return jsonify({'error': 'Message and response are required'}), 400
-    
-    try:
-        db = get_db()
-        cursor = db.cursor()
-        
-        cursor.execute(
-            'INSERT INTO chat_history (user_id, message, response) VALUES (%s, %s, %s)',
-            (session['user_id'], message, response)
-        )
-        db.commit()
-        
-        return jsonify({'message': 'Chat saved successfully'}), 201
-    except mysql.connector.Error as err:
-        return jsonify({'error': str(err)}), 500
 
 @app.route('/skip-login')
 def skip_login():
@@ -460,4 +461,8 @@ def new_chat():
     return jsonify({'status': 'success'})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # On Render, the PORT environment variable will be set
+    port = int(os.environ.get('PORT', 5000))
+    # In production, you don't want debug=True
+    debug = not os.environ.get('RENDER', False)
+    app.run(host='0.0.0.0', port=port, debug=debug)
