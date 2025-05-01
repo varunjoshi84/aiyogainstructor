@@ -2,7 +2,7 @@ import sys
 import os
 
 # Add your project directory to the sys.path
-path = '/home/YOUR_PYTHONANYWHERE_USERNAME/aiyogainstructor'
+path = '/home/varunjoshi84/aiyogainstructor'
 if path not in sys.path:
     sys.path.insert(0, path)
 
