@@ -1,66 +1,71 @@
-# Yoga Instructor AI
+# AI Yoga Instructor
 
-# AIYogaInstructor
-
-An AI-powered yoga instruction application that provides personalized yoga guidance and recommendations.
+A web application powered by GROQ AI and Google Gemini to provide yoga instruction, pose analysis, and chat-based interaction.
 
 ## Features
 
-- Personalized yoga pose recommendations
-- Interactive user interface
+- Chat with an AI yoga assistant
+- Upload and analyze yoga poses with visual feedback
 - User authentication system
-- Real-time AI-powered guidance
+- Chat history tracking for logged-in users
 
-## Prerequisites
+## Tech Stack
 
-Before you begin, ensure you have the following installed:
-- Python 3.7 or higher
-- XAMPP or similar local server environment
-- pip (Python package manager)
+- Frontend: HTML, CSS, JavaScript
+- Backend: Flask (Python)
+- Database: MongoDB
+- AI: GROQ API for chat, Google Gemini for image analysis
+- Deployment: Railway
 
-## Installation
+## Deployment Instructions for Railway
 
-1. Clone the repository:
-```bash
-git clone https://github.com/varunjoshi84/aiyogainstructor.git
-cd aiyogainstructor
-```
+### Prerequisites
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
-```
+- A Railway account
+- A MongoDB database (MongoDB Atlas recommended)
+- GROQ API key
+- Google Gemini API key
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+### Steps to Deploy
 
-4. Set up environment variables:
-- Copy `.env.example` to `.env`
-- Update the `.env` file with your actual credentials:
-  - Get your GROQ API key from [GROQ's website](https://groq.com)
-  - Configure database settings if needed
+1. **Fork or clone this repository**
 
-## Running the Application
+2. **Create a MongoDB Atlas database**
+   - Set up a free tier cluster
+   - Create a database user
+   - Get your connection string
 
-1. Start your local server environment (XAMPP)
+3. **Set up Railway project**
+   - Connect your GitHub repo
+   - Railway will automatically detect your `railway.json` configuration
 
-2. Run the Flask application:
-```bash
-python app.py
-```
+4. **Configure environment variables in Railway dashboard**
+   - `MONGODB_URI`: Your MongoDB connection string
+   - `GEMINI_API_KEY`: Your Google Gemini API key
+   - `GROQ_API_KEY`: Your GROQ API key
+   - `SECRET_KEY`: A random secure string for session encryption
 
-3. Open your web browser and navigate to:
-```
-http://localhost:5000
-```
+5. **Deploy the application**
+   - Railway will automatically build and deploy your app
+   - Access your app at the provided Railway URL
+
+## Local Development
+
+1. Clone the repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Set up a `.env` file with the required environment variables
+4. Run the application: `python app.py`
+
+## Environment Variables
+
+- `MONGODB_URI`: MongoDB connection string
+- `GEMINI_API_KEY`: Google Gemini API key
+- `GROQ_API_KEY`: GROQ API key
+- `SECRET_KEY`: Secret key for Flask session
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
 
 ## Acknowledgments
 

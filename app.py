@@ -1,6 +1,5 @@
 import os
 import requests
-import mysql.connector
 from flask import Flask, request, jsonify, render_template, session, redirect, url_for, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 import google.generativeai as genai
@@ -9,6 +8,8 @@ import base64
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from pymongo import MongoClient
+from bson import ObjectId
 
 # Load environment variables from .env file
 load_dotenv()
@@ -37,27 +38,22 @@ if GEMINI_API_KEY:
 else:
     model = None
 
-# MySQL Configuration
-MYSQL_HOST = os.getenv('MYSQL_HOST', 'localhost')
-MYSQL_USER = os.getenv('MYSQL_USER', 'root')
-MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', '')
-MYSQL_DB = os.getenv('MYSQL_DB', 'yoga_db')
+# MongoDB Configuration
+MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/yoga_db')
+# Check if we're in Railway environment
+is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
 
 def get_db():
     if 'db' not in g:
         try:
-            g.db = mysql.connector.connect(
-                host=MYSQL_HOST,
-                user=MYSQL_USER,
-                password=MYSQL_PASSWORD,
-                database=MYSQL_DB
-            )
-        except mysql.connector.Error as err:
+            client = MongoClient(MONGODB_URI)
+            g.client = client
+            g.db = client.get_database()
+        except Exception as err:
             print(f"Database connection error: {err}")
-            # Return None or create a dummy DB for demo mode
-            if os.environ.get('RENDER'):
-                # In production on Render, we might want to handle this differently
-                print("Running in demo mode on Render without database")
+            # Return None for demo mode
+            if is_railway:
+                print("Running in demo mode on Railway without database")
                 return None
             raise
     return g.db
@@ -69,59 +65,46 @@ def init_db():
             print("Skipping database initialization - running in demo mode")
             return
             
-        cursor = db.cursor()
-        
-        # Create users table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(255) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Create chat_history table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chat_history (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT,
-                message TEXT NOT NULL,
-                response TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        ''')
-        
-        db.commit()
-        cursor.close()
+        # Create users collection if it doesn't exist
+        if "users" not in db.list_collection_names():
+            db.create_collection("users")
+            print("Created users collection")
+            
+        # Create chat_history collection if it doesn't exist
+        if "chat_history" not in db.list_collection_names():
+            db.create_collection("chat_history")
+            print("Created chat_history collection")
+            
     except Exception as e:
         print(f"Database initialization error: {e}")
-        if os.environ.get('RENDER'):
+        if is_railway:
             print("Continuing in demo mode without database")
 
 @app.teardown_appcontext
 def close_db(error):
-    if hasattr(g, 'db') and g.db is not None:
-        g.db.close()
+    if hasattr(g, 'client'):
+        g.client.close()
 
 def validate_api_keys():
     """Validate API keys and print status message"""
     print("\n=== API Configuration Status ===")
     
-    # Check MySQL connection
+    # Check MongoDB connection
     try:
         db = get_db()
         if db is None:
-            print("MySQL Connection: Skipped - running in demo mode")
+            print("MongoDB Connection: Skipped - running in demo mode")
         else:
-            cursor = db.cursor()
-            cursor.execute("SELECT VERSION()")
-            version = cursor.fetchone()[0]
-            print(f"MySQL Connection: Successful (Version: {version})")
-            cursor.close()
+            db_info = db.command("serverStatus")
+            print(f"MongoDB Connection: Successful (Version: {db_info.get('version', 'Unknown')})")
     except Exception as e:
-        print(f"MySQL Connection: Failed - {str(e)}")
+        print(f"MongoDB Connection: Failed - {str(e)}")
+    
+    # Check environment
+    if is_railway:
+        print("Environment: Railway")
+    else:
+        print("Environment: Local/Other")
     
     # Check Gemini API
     if GEMINI_API_KEY:
@@ -219,6 +202,21 @@ def ask_groq(user_input):
         if "choices" in response_json:
             ai_response = response_json["choices"][0]["message"]["content"].strip()
             session["chat_history"].append({"role": "assistant", "content": ai_response})  # ✅ Store AI response
+            
+            # Save chat to database if user is logged in
+            if session.get('logged_in') and session.get('user_id'):
+                try:
+                    db = get_db()
+                    if db:
+                        db.chat_history.insert_one({
+                            "user_id": session['user_id'],
+                            "message": user_input,
+                            "response": ai_response,
+                            "created_at": datetime.now()
+                        })
+                except Exception as e:
+                    print(f"Error saving chat history: {str(e)}")
+                
             return ai_response
         else:
             return "Error: Unexpected API response."
@@ -302,27 +300,21 @@ def signup():
         if db is None:
             return jsonify({'error': 'Database not available'}), 500
         
-        cursor = db.cursor()
-        
         # Check if username already exists
-        cursor.execute('SELECT id FROM users WHERE username = %s', (username,))
-        if cursor.fetchone():
+        existing_user = db.users.find_one({"username": username})
+        if existing_user:
             return jsonify({'error': 'Username already exists'}), 400
         
         # Hash password and create new user
         hashed_password = generate_password_hash(password)
-        cursor.execute(
-            'INSERT INTO users (username, password) VALUES (%s, %s)',
-            (username, hashed_password)
-        )
-        db.commit()
-        
-        # Get the new user's ID
-        cursor.execute('SELECT id FROM users WHERE username = %s', (username,))
-        user_id = cursor.fetchone()[0]
+        user_id = db.users.insert_one({
+            "username": username,
+            "password": hashed_password,
+            "created_at": datetime.now()
+        }).inserted_id
         
         # Set session variables
-        session['user_id'] = user_id
+        session['user_id'] = str(user_id)
         session['username'] = username
         session['logged_in'] = True
         
@@ -330,10 +322,8 @@ def signup():
             'message': 'Registration successful',
             'redirect': '/app'
         }), 201
-    except mysql.connector.Error as err:
+    except Exception as err:
         return jsonify({'error': str(err)}), 500
-    finally:
-        cursor.close()
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -349,14 +339,11 @@ def login():
         if db is None:
             return jsonify({'error': 'Database not available'}), 500
         
-        cursor = db.cursor()
-        
         # Get user from database
-        cursor.execute('SELECT id, password FROM users WHERE username = %s', (username,))
-        user = cursor.fetchone()
+        user = db.users.find_one({"username": username})
         
-        if user and check_password_hash(user[1], password):
-            session['user_id'] = user[0]
+        if user and check_password_hash(user['password'], password):
+            session['user_id'] = str(user['_id'])
             session['username'] = username
             session['logged_in'] = True
             return jsonify({
@@ -365,10 +352,8 @@ def login():
             }), 200
         else:
             return jsonify({'error': 'Invalid username or password'}), 401
-    except mysql.connector.Error as err:
+    except Exception as err:
         return jsonify({'error': str(err)}), 500
-    finally:
-        cursor.close()
 
 @app.route('/skip-login')
 def skip_login():
@@ -460,9 +445,39 @@ def new_chat():
         session.pop('chat_history')
     return jsonify({'status': 'success'})
 
+# New routes for chat history
+@app.route('/get-chat-history', methods=['GET'])
+def get_chat_history():
+    """Get user's chat history from MongoDB."""
+    if not session.get('logged_in'):
+        return jsonify({"error": "Please log in to view chat history"}), 401
+    
+    try:
+        db = get_db()
+        if db is None:
+            return jsonify({"error": "Database not available"}), 500
+        
+        # Get chat history sorted by creation date
+        user_id = session['user_id']
+        chats = list(db.chat_history.find(
+            {"user_id": user_id},
+            {"_id": 1, "message": 1, "response": 1, "created_at": 1}
+        ).sort("created_at", -1).limit(50))  # Get most recent 50
+        
+        # Convert ObjectId to string for JSON serialization
+        for chat in chats:
+            chat['_id'] = str(chat['_id'])
+            # Convert datetime to ISO format string
+            if isinstance(chat.get('created_at'), datetime):
+                chat['created_at'] = chat['created_at'].isoformat()
+        
+        return jsonify({"history": chats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
-    # On Render, the PORT environment variable will be set
+    # On Railway, the PORT environment variable will be set
     port = int(os.environ.get('PORT', 5000))
     # In production, you don't want debug=True
-    debug = not os.environ.get('RENDER', False)
+    debug = not is_railway
     app.run(host='0.0.0.0', port=port, debug=debug)
