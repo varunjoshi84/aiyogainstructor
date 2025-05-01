@@ -16,7 +16,7 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
-app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to False for PythonAnywhere free tier
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
@@ -48,8 +48,9 @@ if not MONGODB_URI or "your-actual-username" in MONGODB_URI:
 else:
     print(f"Using MongoDB URI from environment: {MONGODB_URI.split('@')[-1] if '@' in MONGODB_URI else MONGODB_URI}")
 
-# Check if we're in Railway environment
+# Check if we're in different environments
 is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
+is_pythonanywhere = os.environ.get('PYTHONANYWHERE') is not None
 
 def get_db():
     if 'db' not in g:
@@ -113,6 +114,8 @@ def validate_api_keys():
     # Check environment
     if is_railway:
         print("Environment: Railway")
+    elif is_pythonanywhere:
+        print("Environment: PythonAnywhere")
     else:
         print("Environment: Local/Other")
     
@@ -510,8 +513,16 @@ def get_chat_history():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    # On Railway, the PORT environment variable will be set
-    port = int(os.environ.get('PORT', 5000))
-    # In production, you don't want debug=True
-    debug = not is_railway
-    app.run(host='0.0.0.0', port=port, debug=debug)
+    # Check which environment we're running in
+    if is_pythonanywhere:
+        # In PythonAnywhere, this block won't run as the WSGI script imports the app
+        print("Running on PythonAnywhere")
+    elif is_railway:
+        # On Railway, the PORT environment variable will be set
+        port = int(os.environ.get('PORT', 5000))
+        debug = False
+        app.run(host='0.0.0.0', port=port, debug=debug)
+    else:
+        # Local development
+        port = int(os.environ.get('PORT', 5000))
+        app.run(host='0.0.0.0', port=port, debug=True)
