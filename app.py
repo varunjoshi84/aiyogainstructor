@@ -39,16 +39,26 @@ else:
     model = None
 
 # MongoDB Configuration
-MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/yoga_db')
+# Try to use the MongoDB URI from environment variables, fallback to local MongoDB
+MONGODB_URI = os.getenv('MONGODB_URI')
+if not MONGODB_URI or "your-actual-username" in MONGODB_URI:
+    # Fallback to local MongoDB if URI is not set or contains placeholder
+    MONGODB_URI = "mongodb://localhost:27017/yoga_db"
+    print(f"Using local MongoDB: {MONGODB_URI}")
+else:
+    print(f"Using MongoDB URI from environment: {MONGODB_URI.split('@')[-1] if '@' in MONGODB_URI else MONGODB_URI}")
+
 # Check if we're in Railway environment
 is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
 
 def get_db():
     if 'db' not in g:
         try:
-            client = MongoClient(MONGODB_URI)
+            client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
             g.client = client
             g.db = client.get_database()
+            # Test connection
+            g.client.server_info()
         except Exception as err:
             print(f"Database connection error: {err}")
             # Return None for demo mode
@@ -331,28 +341,52 @@ def login():
     username = data.get('username')
     password = data.get('password')
     
+    print(f"Login attempt for username: {username}")
+    
     if not username or not password:
+        print("Error: Username and password are required")
         return jsonify({'error': 'Username and password are required'}), 400
     
     try:
+        print("Attempting to get database connection...")
         db = get_db()
         if db is None:
+            print("Error: Database connection returned None")
             return jsonify({'error': 'Database not available'}), 500
         
         # Get user from database
+        print(f"Looking up user: {username}")
         user = db.users.find_one({"username": username})
         
-        if user and check_password_hash(user['password'], password):
-            session['user_id'] = str(user['_id'])
-            session['username'] = username
-            session['logged_in'] = True
-            return jsonify({
-                'message': 'Login successful',
-                'redirect': '/app'
-            }), 200
+        if user:
+            print("User found, checking password")
+            # Debug info about the user document
+            print(f"User document: {str(type(user))}, ID: {str(type(user.get('_id')))}")
+            
+            if check_password_hash(user['password'], password):
+                print("Password matched, setting up session")
+                user_id = str(user['_id'])
+                print(f"User ID for session: {user_id}")
+                
+                session['user_id'] = user_id
+                session['username'] = username
+                session['logged_in'] = True
+                
+                print("Login successful")
+                return jsonify({
+                    'message': 'Login successful',
+                    'redirect': '/app'
+                }), 200
+            else:
+                print("Password check failed")
+                return jsonify({'error': 'Invalid username or password'}), 401
         else:
+            print(f"No user found with username: {username}")
             return jsonify({'error': 'Invalid username or password'}), 401
     except Exception as err:
+        print(f"LOGIN ERROR: {str(err)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(err)}), 500
 
 @app.route('/skip-login')
